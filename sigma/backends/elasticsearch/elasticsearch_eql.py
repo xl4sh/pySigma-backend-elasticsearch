@@ -1,30 +1,31 @@
-import re
+import ipaddress
 import json
-from typing import Iterable, ClassVar, Dict, List, Optional, Pattern, Tuple, Union, Any
+import re
+from typing import Any, ClassVar, Dict, Iterable, List, Optional, Pattern, Tuple, Union
 
-from sigma.conversion.state import ConversionState
-from sigma.rule import SigmaRule, SigmaRuleTag
-from sigma.correlations import SigmaCorrelationRule
+from sigma.conditions import (
+    ConditionAND,
+    ConditionFieldEqualsValueExpression,
+    ConditionItem,
+    ConditionNOT,
+    ConditionOR,
+)
 from sigma.conversion.base import TextQueryBackend
 from sigma.conversion.deferred import DeferredQueryExpression
-from sigma.conditions import (
-    ConditionItem,
-    ConditionAND,
-    ConditionOR,
-    ConditionNOT,
-    ConditionFieldEqualsValueExpression,
-)
+from sigma.conversion.state import ConversionState
+from sigma.correlations import SigmaCorrelationRule
+from sigma.data.mitre_attack import mitre_attack_tactics, mitre_attack_techniques
+from sigma.exceptions import SigmaFeatureNotSupportedByBackendError
+from sigma.rule import SigmaRule, SigmaRuleTag
 from sigma.types import (
     CompareOperators,
     SigmaCompareExpression,
-    SigmaNull,
     SigmaFieldReference,
-    SpecialChars,
+    SigmaNull,
     SigmaNumber,
+    SpecialChars,
 )
-from sigma.data.mitre_attack import mitre_attack_tactics, mitre_attack_techniques
-from sigma.exceptions import SigmaFeatureNotSupportedByBackendError
-import ipaddress
+
 import sigma
 
 
@@ -94,12 +95,12 @@ class EqlBackend(TextQueryBackend):
     # Characters quoted in addition to wildcards and string quote
     # add_escaped: ClassVar[str] = '+-=&|!(){}[]<>^"~*?:\\/ '
     add_escaped: ClassVar[str] = '\n\r\t\\"'
-    bool_values: ClassVar[Dict[bool, str]] = (
-        {  # Values to which boolean values are mapped.
-            True: "true",
-            False: "false",
-        }
-    )
+    bool_values: ClassVar[
+        Dict[bool, str]
+    ] = {  # Values to which boolean values are mapped.
+        True: "true",
+        False: "false",
+    }
 
     # Regular expressions
     # Regular expression query as format string with placeholders {field} and {regex}
@@ -158,10 +159,13 @@ class EqlBackend(TextQueryBackend):
 
     default_correlation_method: ClassVar[str] = "sequence"
 
+    correlation_search_field_normalization_expression: ClassVar[str] = "by {field}"
+    correlation_search_field_normalization_expression_joiner: ClassVar[str] = " "
+
     correlation_search_single_rule_expression: ClassVar[str] = "[any where {query}]"
     correlation_search_multi_rule_expression: ClassVar[str] = "{queries}"
     correlation_search_multi_rule_query_expression: ClassVar[str] = (
-        "[any where {query}]"
+        "[any where {query}] {normalization}"
     )
     correlation_search_multi_rule_query_expression_joiner: ClassVar[str] = " \n "
 
@@ -494,11 +498,7 @@ class EqlBackend(TextQueryBackend):
                 "falsePositives": rule.falsepositives,
                 "from": f"now-{self.schedule_interval}{self.schedule_interval_unit}",
                 "immutable": False,
-                "license": (
-                    rule.license
-                    if rule.license is not None
-                    else "DRL"
-                ),
+                "license": (rule.license if rule.license is not None else "DRL"),
                 "outputIndex": "",
                 "meta": {
                     "from": "1m",
@@ -566,11 +566,7 @@ class EqlBackend(TextQueryBackend):
             "false_positives": rule.falsepositives,
             "from": f"now-{self.schedule_interval}{self.schedule_interval_unit}",
             "immutable": False,
-            "license": (
-                rule.license
-                if rule.license is not None
-                else "DRL"
-            ),
+            "license": (rule.license if rule.license is not None else "DRL"),
             "output_index": "",
             "meta": {
                 "from": "1m",
