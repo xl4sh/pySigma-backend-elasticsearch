@@ -1,7 +1,8 @@
 import pytest
-from sigma.backends.elasticsearch.elasticsearch_eql import EqlBackend
 from sigma.collection import SigmaCollection
 from sigma.exceptions import SigmaFeatureNotSupportedByBackendError
+
+from sigma.backends.elasticsearch.elasticsearch_eql import EqlBackend
 
 
 @pytest.fixture(name="eql_backend")
@@ -197,4 +198,66 @@ detection:
 
     assert eql_backend.convert(rule) == [
         "sequence by SChannelName with maxspan=15m \n [any where EventID:8004] by UserName with runs=35"
+    ]
+
+
+def test_eql_correlation_temporal_ordered_alias(eql_backend: EqlBackend):
+    rule = SigmaCollection.from_yaml(
+        r"""
+title: Suspicious Parent Process Start
+id: b72199a5-719a-4a59-bcf9-23f1337a0dcd
+name: suspicious_parent_proc
+status: test
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        process_image_path|endswith:
+            - '\cmd.exe'
+            - '\hwp.exe'
+            - '\hword.exe'
+            - '\gwp.exe'
+    filter_messenger:
+        parent_image_path|endswith:
+            - '\AIWorks-Messenger.exe'
+    condition: selection and not filter_messenger
+---
+title: PowerShell Child Process Start
+id: 35e09a3a-51f0-4150-ba30-0276a272b02e
+name: suspicious_child_proc
+status: test
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        process_image_path|endswith:
+            - '\powershell.exe'
+    condition: selection
+---
+title: Suspicious Execution Chain (HWP/CMD -> PowerShell)
+id: 96c3a0c0-aba0-4315-9a46-0e2e504707ee
+status: experimental
+author: Gemini
+type: correlation
+correlation:
+    type: temporal_ordered
+    rules:
+        - suspicious_parent_proc
+        - suspicious_child_proc
+    aliases:
+        link_id:
+            suspicious_parent_proc: process_guid
+            suspicious_child_proc: parent_guid
+    group-by:
+        - host_guid
+        - link_id
+    timespan: 20s
+level: high
+        """
+    )
+
+    assert eql_backend.convert(rule) == [
+        'sequence by host_guid with maxspan=20s \n [any where (process_image_path like~ ("*\\\\cmd.exe", "*\\\\hwp.exe", "*\\\\hword.exe", "*\\\\gwp.exe")) and (not parent_image_path:"*\\\\AIWorks-Messenger.exe")] by process_guid \n [any where process_image_path:"*\\\\powershell.exe"] by parent_guid with runs=2'
     ]
