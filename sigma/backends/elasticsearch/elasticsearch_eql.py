@@ -159,13 +159,13 @@ class EqlBackend(TextQueryBackend):
 
     default_correlation_method: ClassVar[str] = "sequence"
 
-    correlation_search_field_normalization_expression: ClassVar[str] = "by {field}"
+    correlation_search_field_normalization_expression: ClassVar[str] = " by {field}"
     correlation_search_field_normalization_expression_joiner: ClassVar[str] = " "
 
     correlation_search_single_rule_expression: ClassVar[str] = "[any where {query}]"
     correlation_search_multi_rule_expression: ClassVar[str] = "{queries}"
     correlation_search_multi_rule_query_expression: ClassVar[str] = (
-        "[any where {query}] {normalization}"
+        "[any where {query}]{normalization}"
     )
     correlation_search_multi_rule_query_expression_joiner: ClassVar[str] = " \n "
 
@@ -184,17 +184,14 @@ class EqlBackend(TextQueryBackend):
         "sequence": "sample {groupby} \n {search} "
     }
     temporal_ordered_correlation_query: ClassVar[Dict[str, str]] = {
-        "sequence": "sequence {groupby} with maxspan={timespan} \n {search} {aggregate} {condition}"
+        "sequence": "sequence {groupby} with maxspan={timespan} \n {search}{aggregate} {condition}"
     }
 
     temporal_aggregation_expression: ClassVar[Dict[str, str]] = {
         "sequence": "by {field}",
     }
     temporal_ordered_aggregation_expression: ClassVar[Dict[str, str]] = {
-        "sequence": "",
-    }
-    temporal_ordered_aggregation_expression: ClassVar[Dict[str, str]] = {
-        "sequence": "by {field}"
+        "sequence": "by {field}",
     }
     event_count_aggregation_expression: ClassVar[Dict[str, str]] = {"sequence": ""}
     event_count_condition_expression: ClassVar[Dict[str, str]] = {
@@ -273,6 +270,26 @@ class EqlBackend(TextQueryBackend):
         return super().convert_correlation_rule_from_template(
             rule, correlation_type, method
         )
+
+    def convert_correlation_aggregation_from_template(
+        self,
+        rule,
+        correlation_type: str,
+        method: str,
+        search: str,
+    ) -> str:
+        """Override to handle None field in temporal_ordered aggregation."""
+        result = super().convert_correlation_aggregation_from_template(
+            rule, correlation_type, method, search
+        )
+        # For temporal_ordered, if field is None, return empty string
+        # Otherwise prepend space to result if not empty
+        if correlation_type == "temporal_ordered":
+            if rule.condition.fieldref is None:
+                return ""
+            elif result:
+                return " " + result
+        return result
 
     def convert_correlation_aggregation_groupby_from_template(
         self,
