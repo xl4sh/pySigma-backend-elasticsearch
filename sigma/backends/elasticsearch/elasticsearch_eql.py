@@ -191,6 +191,9 @@ class EqlBackend(TextQueryBackend):
         "sequence": "by {field}",
     }
     temporal_ordered_aggregation_expression: ClassVar[Dict[str, str]] = {
+        "sequence": "",
+    }
+    temporal_ordered_aggregation_expression: ClassVar[Dict[str, str]] = {
         "sequence": "by {field}"
     }
     event_count_aggregation_expression: ClassVar[Dict[str, str]] = {"sequence": ""}
@@ -236,6 +239,7 @@ class EqlBackend(TextQueryBackend):
         **kwargs,
     ):
         super().__init__(processing_pipeline, collect_errors, **kwargs)
+        self._current_correlation_aliases = set()  # Track current correlation rule's alias names for filtering in group-by clause
         self.index_names = index_names or [
             "apm-*-transaction*",
             "auditbeat-*",
@@ -256,6 +260,58 @@ class EqlBackend(TextQueryBackend):
             "HIGH": 73,
             "CRITICAL": 99,
         }
+
+    def convert_correlation_rule_from_template(
+        self,
+        rule: Union[SigmaRule, SigmaCorrelationRule],
+        correlation_type: SigmaCorrelationTypeLiteral,
+        method: str,
+    ) -> list[str]:
+        """Override to filter out alias names from group-by clause."""
+        if hasattr(rule, "aliases"):
+            self._current_correlation_aliases = set(rule.aliases.aliases.keys())
+        return super().convert_correlation_rule_from_template(
+            rule, correlation_type, method
+        )
+
+    def convert_correlation_aggregation_groupby_from_template(
+        self,
+        group_by: Optional[list[str]],
+        method: str,
+    ) -> str:
+        """Override to filter out alias names from group-by clause."""
+        if group_by is None:
+            if self.groupby_expression_nofield is None:
+                return ""
+            else:
+                return self.groupby_expression_nofield[method]
+        else:
+            if (
+                self.groupby_expression is None
+                or self.groupby_field_expression is None
+                or self.groupby_field_expression_joiner is None
+            ):
+                raise NotImplementedError(
+                    "Group by expressions are not supported by backend."
+                )
+
+            # Filter out alias names from group_by
+            filtered_group_by = [
+                field
+                for field in group_by
+                if field not in self._current_correlation_aliases
+            ]
+
+            return self.groupby_expression[method].format(
+                fields=self.groupby_field_expression_joiner[method].join(
+                    (
+                        self.groupby_field_expression[method].format(
+                            field=self.escape_and_quote_field(field)
+                        )
+                        for field in filtered_group_by
+                    )
+                )
+            )
 
     @staticmethod
     def _is_field_null_condition(cond: ConditionItem) -> bool:
